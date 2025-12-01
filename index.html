@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Flappy Prank — Updated</title>
+<style>
+  :root{--bg:#70c5ce;--ground:#ded895}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial}
+  body{display:flex;align-items:center;justify-content:center;background:linear-gradient(#9be6f0,#70c5ce);padding:20px}
+  .wrap{width:100%;max-width:520px}
+  canvas{display:block;width:100%;height:auto;border-radius:12px;box-shadow:0 8px 30px rgba(10,10,10,.18)}
+  .controls{display:flex;gap:8px;justify-content:space-between;align-items:center;margin-top:10px}
+  .controls .left{display:flex;gap:8px;align-items:center}
+  .btn{background:#fff;padding:8px 12px;border-radius:8px;cursor:pointer;border:0;box-shadow:0 2px 6px rgba(0,0,0,.1)}
+  .hint{opacity:.85;font-size:13px;color:#04323a}
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .score{font-weight:700;font-size:18px;color:#024048}
+  .dropzone{font-size:13px;color:#02333a;opacity:.85}
+  footer{margin-top:10px;font-size:12px;color:#012a2e;opacity:.7}
+  input[type=file]{display:none}
+  .file-warn { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); background: rgba(255,80,80,0.95); color: #fff; padding:6px 10px; border-radius:6px; font-size:13px; display:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="score">Score: <span id="score">0</span></div>
+    <div class="dropzone">Drag an image onto the canvas or use choose image</div>
+  </div>
+  <canvas id="game" width="480" height="640" tabindex="0"></canvas>
+
+  <div class="controls">
+    <div class="left">
+      <label class="btn">
+        Choose image
+        <input id="file" type="file" accept="image/*">
+      </label>
+      <button id="reset" class="btn">Reset sprite</button>
+    </div>
+    <div class="hint">Space / Tap to flap • Click canvas to start</div>
+  </div>
+
+  <footer>Flappy Prank — made for laughs. Be cool, get consent if needed 😅</footer>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const fileInput = document.getElementById('file');
+  const resetBtn = document.getElementById('reset');
+  const scoreEl = document.getElementById('score');
+
+  // Logical size
+  const W = 480, H = 640;
+  canvas.width = W; canvas.height = H;
+
+  // Game state
+  let frames = 0;
+  let score = 0;
+  let running = false;
+  let gameOver = false;
+
+  // Bird (slowed settings)
+  const bird = {
+    x: 120, y: H/2, vy: 0, w: 48, h: 48,
+    gravity: 0.28,        // slowed gravity
+    flapStrength: -6,     // weaker flap
+    rotation: 0
+  };
+
+  // Pipes
+  const pipes = [];
+  const pipeGap = 150;
+  const pipeWidth = 80;
+  const pipeInterval = 140; // frames between pipes (slower spawn)
+
+  // Ground
+  const groundHeight = 80;
+
+  // --- Load images from your folder (exact filenames you provided) ---
+  const bgImg = new Image();
+  bgImg.src = "background.jpg";
+
+  const defaultBirdImg = new Image();
+  defaultBirdImg.src = "bird image.png"; // exact filename with space and .png
+
+  // warn flags if files missing
+  let bgLoaded = false, birdLoaded = false;
+  bgImg.onload = () => { bgLoaded = true; };
+  defaultBirdImg.onload = () => { birdLoaded = true; };
+
+  bgImg.onerror = () => { console.warn('background.jpg failed to load — check filename/location.'); };
+  defaultBirdImg.onerror = () => { console.warn('bird image.png failed to load — check filename/location.'); };
+
+  // Current sprite used for the bird (can be replaced via picker or drag/drop)
+  let sprite = defaultBirdImg;
+
+  // If user loads a custom image via file input or drop, we'll draw it on an offscreen canvas and use that
+  function loadImageFromFile(file) {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const s = document.createElement('canvas');
+      const size = 256;
+      s.width = s.height = size;
+      const g = s.getContext('2d');
+
+      // center-crop the image into a circle
+      const min = Math.min(img.width, img.height);
+      const sx = (img.width - min) / 2;
+      const sy = (img.height - min) / 2;
+
+      // white background circle
+      g.fillStyle = '#fff';
+      g.beginPath(); g.arc(size/2, size/2, size/2 - 2, 0, Math.PI*2);
+      g.closePath(); g.fill();
+
+      // clip to circle and draw image
+      g.save();
+      g.beginPath(); g.arc(size/2, size/2, size/2 - 2, 0, Math.PI*2); g.clip();
+      g.drawImage(img, sx, sy, min, min, 0, 0, size, size);
+      g.restore();
+
+      // subtle ring
+      g.lineWidth = 6;
+      g.strokeStyle = 'rgba(0,0,0,0.08)';
+      g.beginPath(); g.arc(size/2, size/2, size/2 - 3, 0, Math.PI*2); g.stroke();
+
+      sprite = s;
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); alert('Failed to load image.'); };
+    img.src = url;
+  }
+
+  // File input handler
+  fileInput.addEventListener('change', e => {
+    if(e.target.files && e.target.files[0]) loadImageFromFile(e.target.files[0]);
+  });
+
+  // Reset button sets sprite back to the default file "bird image.png"
+  resetBtn.addEventListener('click', () => {
+    sprite = defaultBirdImg;
+  });
+
+  // Drag/drop onto canvas
+  canvas.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+  canvas.addEventListener('drop', e => {
+    e.preventDefault();
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(f) loadImageFromFile(f);
+  });
+
+  // Input handlers
+  function flap() {
+    if(!running) { running = true; gameOver = false; resetAll(); }
+    bird.vy = bird.flapStrength;
+  }
+  window.addEventListener('keydown', e => {
+    if(e.code === 'Space') { e.preventDefault(); flap(); }
+  });
+  canvas.addEventListener('click', () => flap());
+  canvas.addEventListener('touchstart', (e) => { e.preventDefault(); flap(); }, {passive:false});
+
+  // Reset
+  function resetAll() {
+    frames = 0; score = 0; scoreEl.textContent = score; pipes.length = 0;
+    bird.x = 120; bird.y = H/2; bird.vy = 0;
+  }
+
+  // Collision helpers
+  function rectsOverlap(ax,ay,aw,ah,bx,by,bw,bh){
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  // Main update
+  function update() {
+    frames++;
+    if(!running) return;
+
+    // spawn pipes slower
+    if(frames % pipeInterval === 0) {
+      const topH = 80 + Math.random() * (H - groundHeight - 2*80 - pipeGap);
+      pipes.push({ x: W, topH, passed: false });
+    }
+    for(let i = pipes.length -1; i >= 0; i--) {
+      const p = pipes[i];
+      // slower horizontal speed for pipes (slowed overall)
+      p.x -= 1.1 + Math.min(0.6, frames/4000); // base slow speed, tiny speedup later
+
+      // scoring: when bird passes pipe
+      if(!p.passed && p.x + pipeWidth < bird.x) { p.passed = true; score++; scoreEl.textContent = score; }
+
+      // remove offscreen
+      if(p.x + pipeWidth < -50) pipes.splice(i,1);
+    }
+
+    // bird physics (slower gravity)
+    bird.vy += bird.gravity;
+    bird.y += bird.vy;
+    bird.rotation = Math.max(-0.6, Math.min(1.2, bird.vy/15));
+
+    // ground collision
+    if(bird.y + bird.h/2 > H - groundHeight) {
+      gameOver = true; running = false;
+    }
+
+    // ceiling
+    if(bird.y - bird.h/2 < 0) { bird.y = bird.h/2; bird.vy = 0; }
+
+    // pipe collisions
+    for(const p of pipes){
+      if(rectsOverlap(bird.x - bird.w/2, bird.y - bird.h/2, bird.w, bird.h, p.x, 0, pipeWidth, p.topH)) {
+        gameOver = true; running = false;
+      }
+      const botY = p.topH + pipeGap;
+      if(rectsOverlap(bird.x - bird.w/2, bird.y - bird.h/2, bird.w, bird.h, p.x, botY, pipeWidth, H - botY - groundHeight)) {
+        gameOver = true; running = false;
+      }
+    }
+
+    if(gameOver){
+      bird.vy = 0;
+    }
+  }
+
+  // Draw
+  function draw() {
+    // Background image (draw even if not yet loaded — browser will skip until available)
+    if(bgLoaded) {
+      ctx.drawImage(bgImg, 0, 0, W, H);
+    } else {
+      // fallback fill while loading or if missing
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg') || '#70c5ce';
+      ctx.fillRect(0,0,W,H);
+      if(!bgLoaded && frames < 60) {
+        // show a small message on first seconds if background missing
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.font = '14px system-ui';
+        ctx.textAlign = 'left';
+        ctx.fillText('Loading background.jpg...', 12, 20);
+      }
+    }
+
+    // Pipes
+    for(const p of pipes){
+      ctx.fillStyle = '#2e8b57';
+      ctx.fillRect(p.x, 0, pipeWidth, p.topH);
+      const botY = p.topH + pipeGap;
+      ctx.fillRect(p.x, botY, pipeWidth, H - botY - groundHeight);
+      ctx.fillStyle = '#2b7a4b';
+      ctx.fillRect(p.x - 6, p.topH - 12, pipeWidth + 12, 12);
+      ctx.fillRect(p.x - 6, botY + (H - botY - groundHeight), pipeWidth + 12, 12);
+    }
+
+    // ground
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--ground') || '#ded895';
+    ctx.fillRect(0, H - groundHeight, W, groundHeight);
+
+    // bird sprite with rotation
+    ctx.save();
+    ctx.translate(bird.x, bird.y);
+    ctx.rotate(bird.rotation);
+    const s = sprite;
+    // if sprite is an Image object and loaded, draw it; if it's a canvas, draw it too
+    try {
+      if(s && (s instanceof HTMLImageElement) && s.complete && s.naturalWidth) {
+        ctx.drawImage(s, 0, 0, s.naturalWidth, s.naturalHeight, -bird.w/2, -bird.h/2, bird.w, bird.h);
+      } else if(s && (s instanceof HTMLCanvasElement)) {
+        ctx.drawImage(s, 0, 0, s.width, s.height, -bird.w/2, -bird.h/2, bird.w, bird.h);
+      } else {
+        // placeholder circle if sprite not ready
+        ctx.fillStyle = '#ffdd57';
+        ctx.beginPath(); ctx.arc(0,0,bird.w/2,0,Math.PI*2); ctx.fill();
+      }
+    } catch(e) {
+      // fallback placeholder
+      ctx.fillStyle = '#ffdd57';
+      ctx.beginPath(); ctx.arc(0,0,bird.w/2,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+
+    // UI overlays
+    if(!running && !gameOver) {
+      ctx.fillStyle = 'rgba(2,40,48,0.06)';
+      ctx.fillRect(W/2 - 130, H/2 - 52, 260, 100);
+      ctx.fillStyle = '#022b2f';
+      ctx.font = '20px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('Click or Tap to Start', W/2, H/2 - 8);
+      ctx.font = '14px system-ui';
+      ctx.fillText('Space or Tap to Flap', W/2, H/2 + 20);
+      if(!birdLoaded) {
+        ctx.font = '12px system-ui';
+        ctx.fillText('Note: default bird image not loaded (bird image.png)', W/2, H/2 + 44);
+      }
+    }
+    if(gameOver) {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(0,0,W,H);
+      ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+      ctx.font = 'bold 36px system-ui';
+      ctx.fillText('Game Over', W/2, H/2 - 10);
+      ctx.font = '20px system-ui';
+      ctx.fillText('Score: ' + score, W/2, H/2 + 26);
+      ctx.font = '14px system-ui';
+      ctx.fillText('Click to try again', W/2, H/2 + 56);
+    }
+  }
+
+  // Main loop
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // click to restart after game over
+  canvas.addEventListener('click', () => {
+    if(gameOver) { running = true; gameOver = false; resetAll(); }
+  });
+
+  // initialize
+  resetAll();
+  loop();
+})();
+</script>
+</body>
+</html>
