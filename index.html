@@ -62,11 +62,15 @@
   let running = false;
   let gameOver = false;
 
-  // Bird (slowed settings)
+  // Bird (adjusted: slower gravity and larger size)
   const bird = {
-    x: 120, y: H/2, vy: 0, w: 48, h: 48,
-    gravity: 0.28,        // slowed gravity
-    flapStrength: -6,     // weaker flap
+    x: 120,
+    y: H/2,
+    vy: 0,
+    w: 96,     // increased width (was 48)
+    h: 96,     // increased height (was 48)
+    gravity: 0.12,     // slowed gravity (was 0.28)
+    flapStrength: -6,  // flap strength kept (feel free to tweak)
     rotation: 0
   };
 
@@ -102,8 +106,9 @@
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
+      // larger offscreen canvas so the final scaled bird keeps quality
       const s = document.createElement('canvas');
-      const size = 256;
+      const size = 512; // increased offscreen size for better quality on larger bird
       s.width = s.height = size;
       const g = s.getContext('2d');
 
@@ -124,9 +129,9 @@
       g.restore();
 
       // subtle ring
-      g.lineWidth = 6;
+      g.lineWidth = 10;
       g.strokeStyle = 'rgba(0,0,0,0.08)';
-      g.beginPath(); g.arc(size/2, size/2, size/2 - 3, 0, Math.PI*2); g.stroke();
+      g.beginPath(); g.arc(size/2, size/2, size/2 - 5, 0, Math.PI*2); g.stroke();
 
       sprite = s;
       URL.revokeObjectURL(url);
@@ -200,7 +205,8 @@
     // bird physics (slower gravity)
     bird.vy += bird.gravity;
     bird.y += bird.vy;
-    bird.rotation = Math.max(-0.6, Math.min(1.2, bird.vy/15));
+    // rotation scaled for larger sprite (so rotation looks natural)
+    bird.rotation = Math.max(-0.6, Math.min(1.2, bird.vy / 25));
 
     // ground collision
     if(bird.y + bird.h/2 > H - groundHeight) {
